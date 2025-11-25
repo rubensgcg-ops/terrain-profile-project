@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Terrain Profile Tool</title>
+
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <!-- Plotly -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
+    <!-- CSS local -->
+    <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+<div id="app">
+    <div id="map"></div>
+
+    <div id="side">
+
+        <h2>Terrain Profile</h2>
+        <p>Clique em dois pontos no mapa para gerar o perfil.</p>
+
+        <!-- Campo Pontos por KM -->
+        <div class="controls">
+            <label for="pointsPerKm"><b>Pontos por km:</b></label>
+            <input 
+                id="pointsPerKm" 
+                type="number" 
+                value="10" 
+                min="10" 
+                max="200" 
+                step="10" 
+                style="width:90px; margin-left:10px;">
+        </div>
+
+        <!-- Informações de Distância e Total de Pontos -->
+        <div id="routeInfo" style="margin-top:10px; font-size:14px; color:#333;">
+            <b>Distância:</b> —  
+            &nbsp;&nbsp; | &nbsp;&nbsp;
+            <b>Pontos:</b> —
+        </div>
+
+        <!-- Gráfico -->
+        <div id="chart" style="height:300px; margin-top:15px;"></div>
+
+        <!-- Maior elevação relativa ao início -->
+        <div id="relativeElevation" style="margin-top:10px; font-size:14px; color:#333;">
+            <b>Elevação relativa ao início:</b> —
+        </div>
+
+        <!-- Botões -->
+        <div class="controls" style="margin-top: 15px;">
+            <button id="resetBtn">Resetar</button>
+            <button id="exportBtn" disabled>Exportar CSV</button>
+        </div>
+
+        <!-- Info do sistema -->
+        <div id="info" style="margin-top:15px;"></div>
+
+    </div>
+</div>
+
+<script>
+
+// Backend detectado automaticamente (funciona com Flask)
+const API = window.location.origin;
+
+// =========================
+// MAPA LEAFLET
+// =========================
+const map = L.map("map").setView([-23.55, -46.63], 10);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+
+let startMarker = null;
+let endMarker = null;
+let line = null;
+let highlight = null;
+let currentData = null;
+
+// =========================
+// CLICK NO MAPA
+// =========================
+map.on("click", async (e) => {
+
+    // Primeiro clique → início
+    if (!startMarker) {
+        startMarker = L.marker(e.latlng).addTo(map).bindPopup("Início").openPopup();
+        return;
+    }
+
+    // Segundo clique → fim
+    if (!endMarker) {
+        endMarker = L.marker(e.latlng).addTo(map).bindPopup("Fim").openPopup();
+
+        if (line) map.removeLayer(line);
+        line = L.polyline(
+            [startMarker.getLatLng(), endMarker.getLatLng()], 
+            { color: "red" }
+        ).addTo(map);
+
+        // =========================
+        // CÁLCULO DE N (pontos por km)
+        // =========================
+        const pointsPerKm = parseInt(document.getElementById("pointsPerKm").value) || 10;
+        const distMeters = map.distance(startMarker.getLatLng(), endMarker.getLatLng());
+        const distKm = distMeters / 1000;
+
+        let n = Math.floor(distKm * pointsPerKm);
+        n = Math.max(20, Math.min(n, 2000)); // limites
+
+        // Mostrar distância + n
+        document.getElementById("routeInfo").innerHTML =
+            `<b>Distância:</b> ${distKm.toFixed(3)} km (${Math.round(distMeters)} m)
+             &nbsp;&nbsp; | &nbsp;&nbsp;
+             <b>Pontos totais:</b> ${n}`;
+
+        // =========================
+        // CHAMAR API DO BACKEND
+        // =========================
+        const url = `${API}/profile?lat1=${startMarker.getLatLng().lat}&lon1=${startMarker.getLatLng().lng}&lat2=${endMarker.getLatLng().lat}&lon2=${endMarker.getLatLng().lng}&n=${n}`;
+
+        document.getElementById("info").innerText = "Obtendo perfil...";
+
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            currentData = data;
+
+            document.getElementById("info").innerText =
+                `Maior elevação: ${data.max_elevation} m (índice ${data.max_index})`;
+
+            document.getElementById("exportBtn").disabled = false;
+
+            // =========================
+            // ELEVAÇÃO RELATIVA AO INÍCIO
+            // =========================
+            const elevStart = data.elevations[0];
+            const elevMax = data.max_elevation;
+            const elevRelative = elevMax - elevStart;
+
+            document.getElementById("relativeElevation").innerHTML =
+                `<b>Elevação relativa ao início:</b> ${elevRelative.toFixed(1)} m`;
+
+            // =========================
+            // GRÁFICO PLOTLY
+            // =========================
+            let trace = {
+                x: data.distances,
+                y: data.elevations,
+                mode: "lines+markers",
+                marker: { size: 5 },
+                hovertemplate: "Distância: %{x:.1f} m<br>Elevação: %{y:.1f} m<extra></extra>"
+            };
+
+            Plotly.newPlot("chart", [trace], {
+                title: "Perfil Altimétrico",
+                xaxis: { title: "Distância (m)" },
+                yaxis: { title: "Elevação (m)" }
+            });
+
+            // Clique no gráfico → destaque no mapa
+            document.getElementById("chart").on("plotly_click", function(ev) {
+                const idx = ev.points[0].pointIndex;
+                const coords = data.points[idx];
+
+                if (highlight) map.removeLayer(highlight);
+
+                highlight = L.circleMarker([coords[0], coords[1]], {
+                    radius: 8,
+                    color: "blue",
+                })
+                .addTo(map)
+                .bindPopup(`Índice: ${idx}`)
+                .openPopup();
+
+                map.panTo([coords[0], coords[1]]);
+            });
+
+        } catch (err) {
+            document.getElementById("info").innerText = "Erro ao obter perfil.";
+            console.error(err);
+        }
+    }
+});
+
+// =========================
+// BOTÃO RESET
+// =========================
+document.getElementById("resetBtn").addEventListener("click", () => {
+    if (startMarker) map.removeLayer(startMarker);
+    if (endMarker) map.removeLayer(endMarker);
+    if (line) map.removeLayer(line);
+    if (highlight) map.removeLayer(highlight);
+
+    startMarker = endMarker = line = highlight = null;
+    currentData = null;
+
+    document.getElementById("exportBtn").disabled = true;
+    document.getElementById("info").innerText = "";
+
+    document.getElementById("routeInfo").innerHTML =
+        "<b>Distância:</b> — &nbsp;&nbsp; | &nbsp;&nbsp; <b>Pontos:</b> —";
+
+    document.getElementById("relativeElevation").innerHTML =
+        "<b>Elevação relativa ao início:</b> —";
+
+    Plotly.purge("chart");
+});
+
+// =========================
+// EXPORT CSV
+// =========================
+document.getElementById("exportBtn").addEventListener("click", () => {
+    if (!currentData) return;
+
+    let csv = "index,lat,lon,elevation,distance_m\n";
+
+    for (let i = 0; i < currentData.points.length; i++) {
+        const p = currentData.points[i];
+        csv += `${i},${p[0]},${p[1]},${currentData.elevations[i]},${currentData.distances[i]}\n`;
+    }
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "profile.csv";
+    a.click();
+
+    URL.revokeObjectURL(url);
+});
+
+</script>
+
+</body>
+</html>

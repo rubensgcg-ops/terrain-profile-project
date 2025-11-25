@@ -1,0 +1,33 @@
+# Ambiente virtual
+.venv/
+venv/
+ENV/
+
+# Arquivos de cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Cache do Flask
+instance/
+*.db
+
+# Arquivos temporários
+*.log
+*.tmp
+*.cache
+
+# Configurações do sistema/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Arquivos gerados automaticamente
+*.zip
+*.csv
+
+# Arquivos de build
+build/
+dist/
