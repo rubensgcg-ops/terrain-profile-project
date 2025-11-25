@@ -17,14 +17,36 @@
 
 <body>
 <div id="app">
-    <div id="map"></div>
 
+    <!-- MAPA -->
+    <div id="map" style="position:relative;"></div>
+
+    <!-- BOTÃO DE ALTERNÂNCIA SATÉLITE -->
+    <button id="toggleSatellite" 
+        style="
+            position:absolute;
+            bottom:10px;
+            left:10px;
+            z-index:9999;
+            padding:8px 14px;
+            background:#007bff;
+            color:white;
+            border:none;
+            border-radius:6px;
+            cursor:pointer;
+            font-size:14px;
+            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        ">
+        Alternar para Satélite
+    </button>
+
+
+    <!-- SIDEBAR -->
     <div id="side">
 
         <h2>Terrain Profile</h2>
         <p>Clique em dois pontos no mapa para gerar o perfil.</p>
 
-        <!-- Campo Pontos por KM -->
         <div class="controls">
             <label for="pointsPerKm"><b>Pontos por km:</b></label>
             <input 
@@ -37,28 +59,21 @@
                 style="width:90px; margin-left:10px;">
         </div>
 
-        <!-- Informações de Distância e Total de Pontos -->
         <div id="routeInfo" style="margin-top:10px; font-size:14px; color:#333;">
-            <b>Distância:</b> —  
-            &nbsp;&nbsp; | &nbsp;&nbsp;
-            <b>Pontos:</b> —
+            <b>Distância:</b> — | <b>Pontos:</b> —
         </div>
 
-        <!-- Gráfico -->
         <div id="chart" style="height:300px; margin-top:15px;"></div>
 
-        <!-- Maior elevação relativa ao início -->
         <div id="relativeElevation" style="margin-top:10px; font-size:14px; color:#333;">
             <b>Elevação relativa ao início:</b> —
         </div>
 
-        <!-- Botões -->
         <div class="controls" style="margin-top: 15px;">
             <button id="resetBtn">Resetar</button>
             <button id="exportBtn" disabled>Exportar CSV</button>
         </div>
 
-        <!-- Info do sistema -->
         <div id="info" style="margin-top:15px;"></div>
 
     </div>
@@ -66,14 +81,64 @@
 
 <script>
 
-// Backend detectado automaticamente (funciona com Flask)
+// Backend detectado automaticamente
 const API = window.location.origin;
 
 // =========================
-// MAPA LEAFLET
+// CAMADAS DO MAPA (OSM + SATÉLITE)
 // =========================
-const map = L.map("map").setView([-23.55, -46.63], 10);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+
+const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "© OpenStreetMap"
+});
+
+const satellite = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    {
+        maxZoom: 19,
+        attribution: "Tiles © Esri"
+    }
+);
+
+const map = L.map("map", {
+    center: [-23.55, -46.63],
+    zoom: 10,
+    layers: [osm]
+});
+
+// Controle padrão do Leaflet
+L.control.layers(
+    {
+        "Mapa Padrão": osm,
+        "Satélite": satellite
+    }
+).addTo(map);
+
+// =========================
+// BOTÃO DE TROCA RÁPIDA
+// =========================
+
+let isSatellite = false;
+
+document.getElementById("toggleSatellite").addEventListener("click", () => {
+    if (isSatellite) {
+        map.removeLayer(satellite);
+        map.addLayer(osm);
+        document.getElementById("toggleSatellite").innerText = "Alternar para Satélite";
+        isSatellite = false;
+    } else {
+        map.removeLayer(osm);
+        map.addLayer(satellite);
+        document.getElementById("toggleSatellite").innerText = "Alternar para Mapa Padrão";
+        isSatellite = true;
+    }
+});
+
+
+// =========================
+// VARIÁVEIS
+// =========================
 
 let startMarker = null;
 let endMarker = null;
@@ -86,13 +151,11 @@ let currentData = null;
 // =========================
 map.on("click", async (e) => {
 
-    // Primeiro clique → início
     if (!startMarker) {
         startMarker = L.marker(e.latlng).addTo(map).bindPopup("Início").openPopup();
         return;
     }
 
-    // Segundo clique → fim
     if (!endMarker) {
         endMarker = L.marker(e.latlng).addTo(map).bindPopup("Fim").openPopup();
 
@@ -102,25 +165,17 @@ map.on("click", async (e) => {
             { color: "red" }
         ).addTo(map);
 
-        // =========================
-        // CÁLCULO DE N (pontos por km)
-        // =========================
         const pointsPerKm = parseInt(document.getElementById("pointsPerKm").value) || 10;
         const distMeters = map.distance(startMarker.getLatLng(), endMarker.getLatLng());
         const distKm = distMeters / 1000;
 
         let n = Math.floor(distKm * pointsPerKm);
-        n = Math.max(20, Math.min(n, 2000)); // limites
+        n = Math.max(20, Math.min(n, 2000));
 
-        // Mostrar distância + n
         document.getElementById("routeInfo").innerHTML =
             `<b>Distância:</b> ${distKm.toFixed(3)} km (${Math.round(distMeters)} m)
-             &nbsp;&nbsp; | &nbsp;&nbsp;
-             <b>Pontos totais:</b> ${n}`;
+             | <b>Pontos totais:</b> ${n}`;
 
-        // =========================
-        // CHAMAR API DO BACKEND
-        // =========================
         const url = `${API}/profile?lat1=${startMarker.getLatLng().lat}&lon1=${startMarker.getLatLng().lng}&lat2=${endMarker.getLatLng().lat}&lon2=${endMarker.getLatLng().lng}&n=${n}`;
 
         document.getElementById("info").innerText = "Obtendo perfil...";
@@ -135,9 +190,6 @@ map.on("click", async (e) => {
 
             document.getElementById("exportBtn").disabled = false;
 
-            // =========================
-            // ELEVAÇÃO RELATIVA AO INÍCIO
-            // =========================
             const elevStart = data.elevations[0];
             const elevMax = data.max_elevation;
             const elevRelative = elevMax - elevStart;
@@ -145,24 +197,17 @@ map.on("click", async (e) => {
             document.getElementById("relativeElevation").innerHTML =
                 `<b>Elevação relativa ao início:</b> ${elevRelative.toFixed(1)} m`;
 
-            // =========================
-            // GRÁFICO PLOTLY
-            // =========================
-            let trace = {
+            Plotly.newPlot("chart", [{
                 x: data.distances,
                 y: data.elevations,
                 mode: "lines+markers",
-                marker: { size: 5 },
-                hovertemplate: "Distância: %{x:.1f} m<br>Elevação: %{y:.1f} m<extra></extra>"
-            };
-
-            Plotly.newPlot("chart", [trace], {
+                marker: { size: 5 }
+            }], {
                 title: "Perfil Altimétrico",
                 xaxis: { title: "Distância (m)" },
                 yaxis: { title: "Elevação (m)" }
             });
 
-            // Clique no gráfico → destaque no mapa
             document.getElementById("chart").on("plotly_click", function(ev) {
                 const idx = ev.points[0].pointIndex;
                 const coords = data.points[idx];
@@ -171,11 +216,9 @@ map.on("click", async (e) => {
 
                 highlight = L.circleMarker([coords[0], coords[1]], {
                     radius: 8,
-                    color: "blue",
+                    color: "blue"
                 })
-                .addTo(map)
-                .bindPopup(`Índice: ${idx}`)
-                .openPopup();
+                .addTo(map);
 
                 map.panTo([coords[0], coords[1]]);
             });
@@ -188,7 +231,7 @@ map.on("click", async (e) => {
 });
 
 // =========================
-// BOTÃO RESET
+// RESET
 // =========================
 document.getElementById("resetBtn").addEventListener("click", () => {
     if (startMarker) map.removeLayer(startMarker);
@@ -203,7 +246,7 @@ document.getElementById("resetBtn").addEventListener("click", () => {
     document.getElementById("info").innerText = "";
 
     document.getElementById("routeInfo").innerHTML =
-        "<b>Distância:</b> — &nbsp;&nbsp; | &nbsp;&nbsp; <b>Pontos:</b> —";
+        "<b>Distância:</b> — | <b>Pontos:</b> —";
 
     document.getElementById("relativeElevation").innerHTML =
         "<b>Elevação relativa ao início:</b> —";
